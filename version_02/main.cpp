@@ -9,7 +9,8 @@
 
 const std::filesystem::path input_file_name("./input.txt");
 const std::filesystem::path output_file_name("./output.txt");
-
+const std::filesystem::path check_normal_name("./output_example.txt");
+const std::filesystem::path check_complex_name("./output_complex_example.txt");
 
 void desynchronize_io()
 {
@@ -466,111 +467,150 @@ std::pair<value_t, std::vector<size_t>> calculate_optimal_slot_enhancement_backt
 
 
 
-struct Input_t
-{
-	size_t usable_slot_quantity;
-	std::vector<size_t> enhanced_slot_quantity_list;
-	std::vector<size_t> core_level_list;
-	std::vector<size_t> skill_value_list;
-	std::vector<std::vector<core_style_t>> core_style_grid;
-} inputData;
-
-std::pair<std::vector<core_style_t>, std::vector<size_t>> main_in_try();
+std::pair<std::vector<core_style_t>, std::vector<size_t>> calculate_best_vmatrix(
+	size_t slot_quantity,
+	const std::vector<std::vector<core_style_t>>& core_style_grid,
+	const std::vector<size_t>& core_level_list,
+	const std::vector<size_t>& skill_value_list,
+	const std::vector<size_t>& slot_quantity_list);
 int main()
 {
 	desynchronize_io();
 
-	// read file
-	std::fstream fileStream(input_file_name);
 	std::vector<std::vector<size_t>> excel_grid;
-	excel_grid.reserve(200);
-	while (!fileStream.eof())
 	{
-		std::vector<size_t> excel_list;
-		excel_list.reserve(3);
-
-		char rawStream[65536];
-		fileStream.getline(rawStream, 65535);
-
-		std::stringstream sstream(rawStream);
-		while (!sstream.eof())
+		// read file
+		std::fstream fileStream(input_file_name);
+		excel_grid.reserve(200);
+		while (!fileStream.eof())
 		{
-			std::string value;
-			sstream >> value;
-			if (value.size())
-				excel_list.push_back(std::stoull(value));
+			std::vector<size_t> excel_list;
+			excel_list.reserve(3);
+
+			char rawStream[65536];
+			fileStream.getline(rawStream, 65535);
+
+			std::stringstream sstream(rawStream);
+			while (!sstream.eof())
+			{
+				std::string value;
+				sstream >> value;
+				if (value.size())
+					excel_list.push_back(std::stoull(value));
+			}
+
+			if (!excel_list.empty())
+				excel_grid.emplace_back(std::move(excel_list));
 		}
 
-		if (!excel_list.empty())
-			excel_grid.emplace_back(std::move(excel_list));
+		if (excel_grid.size() < 3)
+		{
+			std::cout << "no core\n";
+			return 0;
+		}
+		fileStream.close();
 	}
-
-	if (excel_grid.size() < 3)
-	{
-		std::cout << "no core\n";
-		return 0;
-	}
-	fileStream.close();
 
 	// excel to unprocessed input data
-	auto enhanced_slot_quantity_list = std::move(excel_grid[0]);
+	auto slot_quantity_list = std::move(excel_grid[0]);
 	auto core_level_list = std::move(excel_grid[1]);
 	auto skill_value_list = std::move(excel_grid[2]);
 	std::vector<std::vector<size_t>> raw_core_style_list;
 	raw_core_style_list.insert(raw_core_style_list.end(), std::next(excel_grid.begin(), 3), excel_grid.end());
 
+	// input data optimizing
+	while (slot_quantity_list.size() && slot_quantity_list.back() == 0)
+		slot_quantity_list.pop_back();
+	size_t total_slot_quantity = std::accumulate(slot_quantity_list.begin(), slot_quantity_list.end(), 0);
 
-	//// input data optimizing
-	//while (enhanced_slot_quantity_list.size() && enhanced_slot_quantity_list.back() == 0)
-	//	enhanced_slot_quantity_list.pop_back();
-	//size_t usable_slot_quantity = std::accumulate(enhanced_slot_quantity_list.begin(), enhanced_slot_quantity_list.end(), 0);
-	//
-	//std::vector<bool> skill_id_used_list;
-	//for (const std::vector<size_t>& raw_core_style : raw_core_style_list)
-	//{
-	//	if (raw_core_style[0] == 0)
-	//		continue;
-	//
-	//	size_t maximum_raw_core_id = *std::max_element(raw_core_style.begin(), raw_core_style.end());
-	//	if (skill_id_used_list.size() < maximum_raw_core_id)
-	//		skill_id_used_list.resize(maximum_raw_core_id);
-	//	skill_id_used_list[maximum_raw_core_id - 1] = true;
-	//}
-	//
-	//{
-	//	size_t push_index = 0;
-	//	for (size_t ref_index = 0; ref_index < skill_id_used_list.size(); ref_index++)
-	//	{
-	//		if (skill_id_used_list[ref_index])
-	//		{
-	//			core_level_list[push_index] = ref_index;
-	//			skill_value_list[push_index] = ref_index;
-	//			push_index++;
-	//		}
-	//	}
-	//}
+	size_t skill_quantity;
+	std::vector<size_t> optimization_convert_list;
+	std::vector<size_t> optimization_revert_list;
 
-	size_t usable_slot_quantity = std::accumulate(enhanced_slot_quantity_list.begin(), enhanced_slot_quantity_list.end(), 0);
-	core_level_list.resize(17, 0);
-	skill_value_list.resize(17, 0);
+	bool unknown_core_exist = false;
+	std::vector<bool> raw_skill_id_used_list;
+	{
+		for (const std::vector<size_t>& raw_core_style : raw_core_style_list)
+		{
+			if (raw_core_style[0] == 0)
+				continue;
 
-	// repackage to core_style_grid
-	std::vector<std::vector<core_style_t>> core_style_grid(17);
+			size_t maximum_raw_core_id = *std::max_element(raw_core_style.begin(), raw_core_style.end());
+			if (raw_skill_id_used_list.size() <= maximum_raw_core_id)
+				raw_skill_id_used_list.resize(maximum_raw_core_id + 1, false);
+
+			raw_skill_id_used_list[raw_core_style[0]] = true;
+			raw_skill_id_used_list[raw_core_style[1]] = true;
+			raw_skill_id_used_list[raw_core_style[2]] = true;
+		}
+
+		unknown_core_exist = raw_skill_id_used_list[0];
+
+		constexpr size_t init_id = -1;
+		optimization_convert_list.resize(raw_skill_id_used_list.size() + 1, init_id);
+		{
+			size_t dest_id = 0;
+			for (size_t i = 1; i < raw_skill_id_used_list.size(); i++)
+			{
+				const size_t src_id = i;
+				if (raw_skill_id_used_list[i])
+				{
+					optimization_convert_list[src_id] = dest_id;
+					optimization_revert_list.push_back(src_id);
+					dest_id++;
+				}
+			}
+			if (unknown_core_exist)
+			{
+				optimization_convert_list[0] = dest_id;
+				optimization_revert_list.push_back(0);
+				dest_id++;
+			}
+
+			skill_quantity = dest_id;
+		}
+	}
+
+	// 레벨 및 가치 리스트 압축
+	{
+		size_t dest_id = 0;
+		for (size_t i = 1; i < raw_skill_id_used_list.size(); i++)
+		{
+			const size_t src_id = i - 1;
+			if (raw_skill_id_used_list[i])
+			{
+				core_level_list[dest_id] = core_level_list[src_id];
+				skill_value_list[dest_id] = skill_value_list[src_id];
+				dest_id++;
+			}
+		}
+
+		core_level_list.resize(skill_quantity);
+		skill_value_list.resize(skill_quantity);
+		if (unknown_core_exist)
+		{
+			core_level_list.back() = 0;
+			skill_value_list.back() = 0;
+		}
+	}
+
+	// 코어 데이터 생성
+	std::vector<std::vector<core_style_t>> core_style_grid(skill_quantity);
 	for (auto& raw_core_style : raw_core_style_list)
 	{
-		size_t& first = raw_core_style[0];
-		size_t& second = raw_core_style[1];
-		size_t& third = raw_core_style[2];
-		if (first == 0)		continue;
-		if (second == 0)	second = 15ULL + 0;
-		if (third == 0)		third = 15ULL + 1;
+		size_t first = raw_core_style[0];
+		size_t second = raw_core_style[1];
+		size_t third = raw_core_style[2];
 
-		for (auto& id : raw_core_style)
-			id -= 1;
+		if (first == 0)		continue;
+		first = optimization_convert_list[first];
+		second = optimization_convert_list[second];
+		third = optimization_convert_list[third];
+
 		core_style_grid[first].emplace_back(first, second, third);
 	}
 
-	size_t expected_combine_count = 1;
+	// 중복 코어 제거
 	for (auto& core_style_list : core_style_grid)
 	{
 		auto is_core_style_virtually_less = [](const core_style_t& l, const core_style_t& r)
@@ -584,89 +624,60 @@ int main()
 
 		std::sort(core_style_list.begin(), core_style_list.end(), is_core_style_virtually_less);
 		core_style_list.erase(std::unique(core_style_list.begin(), core_style_list.end(), is_core_style_virtually_equal), core_style_list.end());
-
-		expected_combine_count *= core_style_list.size() + 1;
 	}
 
-	size_t expected_assign_count = 1;
-	std::function<size_t(size_t)> factorial;
-	factorial = [&factorial](size_t i)->size_t
+
+	// 계산
+	std::cout << "Start calculation..." << std::endl;
+	auto [best_combination, best_enhanced_slot_case] = calculate_best_vmatrix(
+		total_slot_quantity,
+		core_style_grid,
+		core_level_list,
+		skill_value_list,
+		slot_quantity_list);
+	std::cout << "Calculation finished!" << std::endl;
+
+
+	// 계산 결과 가공
+	std::cout << "\n" << "Serializing data..." << std::endl;
+	std::stringstream sstream;
 	{
-		return i <= 1 ? 1 : i * factorial(i - 1);
-	};
-	size_t decrease = 0;
-	for (size_t i = 0; i < enhanced_slot_quantity_list.size() - 1; i++)
-	{
-		auto enhanced_slot_quantity = enhanced_slot_quantity_list[i];
-		auto enhanceable_slot_quantity = usable_slot_quantity - decrease;
-
-		expected_assign_count *= factorial(enhanceable_slot_quantity) / factorial(enhanceable_slot_quantity - enhanced_slot_quantity) / factorial(enhanced_slot_quantity);
-		decrease += enhanced_slot_quantity;
-	}
-
-	//std::cout << "EXPECTED : " << expected_combine_count << " * " << expected_assign_count << std::endl;
-
-	try
-	{
-		inputData.usable_slot_quantity = usable_slot_quantity;
-		inputData.enhanced_slot_quantity_list = std::move(enhanced_slot_quantity_list);
-		inputData.core_level_list = std::move(core_level_list);
-		inputData.skill_value_list = std::move(skill_value_list);
-		inputData.core_style_grid = std::move(core_style_grid);
-
-		std::cout << "Start calculation..." << std::endl;
-		auto [best_combination, best_enhanced_slot_case] = main_in_try();
-		std::cout << "Calculation finished!" << std::endl;
-
-		std::cout << "Serializing data..." << std::endl;
-		std::stringstream sstream;
+		for (skill_id_t skill_id = 0; skill_id < best_combination.size(); skill_id++)
 		{
-			for (skill_id_t skill_id = 0; skill_id < best_combination.size(); skill_id++)
-			{
-				size_t first = best_combination[skill_id].get_first() + 1;
-				size_t second = best_combination[skill_id].get_second() + 1;
-				size_t third = best_combination[skill_id].get_third() + 1;
-				if (second >= 15ULL) second = 0;
-				if (third >= 15ULL) third = 0;
+			size_t first = best_combination[skill_id].get_first();
+			size_t second = best_combination[skill_id].get_second();
+			size_t third = best_combination[skill_id].get_third();
+			first = optimization_revert_list[first];
+			second = optimization_revert_list[second];
+			third = optimization_revert_list[third];
 
-				size_t enhancement = best_enhanced_slot_case[skill_id];
-				sstream << first << "\t" << second << "\t" << third << "\t" << enhancement << "\n";
-			}
+			size_t enhancement = best_enhanced_slot_case[skill_id];
+			sstream << first << "\t" << second << "\t" << third << "\t" << enhancement << "\n";
 		}
-		std::cout << "Data serialized!" << std::endl;
-
-		std::cout << "Try data save in file. (" << output_file_name << ")" << std::endl;
+	}
+	std::cout << "Data serialized!" << std::endl;
+	
+	// 파일에 계산 결과 저장
+	std::cout << "\n" << "Try data save in file. (" << output_file_name << ")" << std::endl;
+	{
 		std::fstream file_stream(output_file_name, std::fstream::out | std::fstream::trunc);
 		if (file_stream)
 		{
-			for (skill_id_t skill_id = 0; skill_id < best_combination.size(); skill_id++)
-			{
-				size_t first = best_combination[skill_id].get_first() + 1;
-				size_t second = best_combination[skill_id].get_second() + 1;
-				size_t third = best_combination[skill_id].get_third() + 1;
-				if (second >= 15ULL) second = 0;
-				if (third >= 15ULL) third = 0;
-
-				size_t enhancement = best_enhanced_slot_case[skill_id];
-				file_stream << first << "\t" << second << "\t" << third << "\t" << enhancement << "\n";
-			}
-
+			file_stream << sstream.str();
 			std::cout << "Data saved in file! (" << output_file_name << ")" << std::endl;
+			file_stream.close();
 		}
 		else
 			std::cout << "Save failed." << std::endl;
 	}
-	catch (const std::exception& exception)
-	{
-		std::cout << "EXCEPTION : " << exception.what() << std::endl;
-	}
-
 
 	// 리팩토링 및 최적화 과정에서의 로직 손상에 대비한 간단한 결과론적 유효성 검사
+	if constexpr (false)
 	{
 		std::cout << "\n";
 		std::fstream outFile(output_file_name);
-		std::fstream integrityFile("output_example.txt");
+		//std::fstream integrityFile(check_normal_name);
+		std::fstream integrityFile(check_complex_name);
 		while (!integrityFile.eof() && !outFile.eof())
 		{
 			std::string iV, oV;
@@ -681,10 +692,17 @@ int main()
 	}
 }
 
-std::pair<std::vector<core_style_t>, std::vector<size_t>> main_in_try()
+
+
+std::pair<std::vector<core_style_t>, std::vector<size_t>> calculate_best_vmatrix(
+	size_t slot_quantity,
+	const std::vector<std::vector<core_style_t>>& core_style_grid,
+	const std::vector<size_t>& core_level_list,
+	const std::vector<size_t>& skill_value_list,
+	const std::vector<size_t>& slot_quantity_list)
 {
 	// 두 변수가 실제 의미하는 것은 결과적으로 동일함
-	const size_t skill_quantity = inputData.core_style_grid.size();
+	const size_t skill_quantity = core_style_grid.size();
 	const size_t core_type_quantity = skill_quantity;
 
 	// complicated variable
@@ -695,13 +713,13 @@ std::pair<std::vector<core_style_t>, std::vector<size_t>> main_in_try()
 		// 각 코어 타입별 최대 "core" 가치
 		std::vector<value_t> max_core_value_of_each_core_type;
 		max_core_value_of_each_core_type.reserve(core_type_quantity);
-		for (auto& core_style_list : inputData.core_style_grid)
+		for (auto& core_style_list : core_style_grid)
 		{
 			value_t max_value = 0;
 			for (auto& core_style : core_style_list)
 			{
-				value_t core_style_value = evaluete_core_style(core_style, inputData.skill_value_list);
-				level_t core_level = inputData.core_level_list[core_style.get_first()];
+				value_t core_style_value = evaluete_core_style(core_style, skill_value_list);
+				level_t core_level = core_level_list[core_style.get_first()];
 				value_t core_value = core_style_value * core_level;
 				max_value = std::max(max_value, core_value);
 			}
@@ -750,12 +768,12 @@ std::pair<std::vector<core_style_t>, std::vector<size_t>> main_in_try()
 		// 각 코어 타입별 최대 "core_style" 가치
 		std::vector<value_t> max_core_style_value_of_each_core_type;
 		max_core_style_value_of_each_core_type.reserve(core_type_quantity);
-		for (auto& core_style_list : inputData.core_style_grid)
+		for (auto& core_style_list : core_style_grid)
 		{
 			value_t max_value = 0;
 			for (auto& core_style : core_style_list)
 			{
-				value_t core_style_value = evaluete_core_style(core_style, inputData.skill_value_list);
+				value_t core_style_value = evaluete_core_style(core_style, skill_value_list);
 				max_value = std::max(max_value, core_style_value);
 			}
 			max_core_style_value_of_each_core_type.push_back(max_value);
@@ -766,14 +784,12 @@ std::pair<std::vector<core_style_t>, std::vector<size_t>> main_in_try()
 			std::vector<value_t> max_core_style_value_partition;
 			max_core_style_value_partition.assign(iter, max_core_style_value_of_each_core_type.end());
 			std::sort(max_core_style_value_partition.begin(), max_core_style_value_partition.end(), std::greater<value_t>());
-			
+
 			ordered_max_core_type_value_grid.emplace_back(std::move(max_core_style_value_partition));
 		}
 	}
-	auto get_theoretical_max_slot_enhancement_value = [&ordered_max_core_type_value_grid](skill_id_t begin_skill_id, size_t remaining_slot_quantity)->value_t
+	auto get_theoretical_max_slot_enhancement_value = [&slot_quantity_list, &ordered_max_core_type_value_grid](skill_id_t begin_skill_id, size_t remaining_slot_quantity)->value_t
 	{
-		const std::vector<size_t>& enhanced_slot_quantity_list = inputData.enhanced_slot_quantity_list;
-
 		const auto& sorted_core_style_value_list = ordered_max_core_type_value_grid[begin_skill_id];
 		remaining_slot_quantity = std::min(remaining_slot_quantity, sorted_core_style_value_list.size());
 		if (remaining_slot_quantity == 0)
@@ -781,10 +797,10 @@ std::pair<std::vector<core_style_t>, std::vector<size_t>> main_in_try()
 
 		size_t slot_index = 0;
 		value_t total_value = 0;
-		const size_t enhancement_maximum = enhanced_slot_quantity_list.size() - 1;
+		const size_t enhancement_maximum = slot_quantity_list.size() - 1;
 		for (size_t enhancement = enhancement_maximum; enhancement > 0; enhancement--)
 		{
-			size_t enhanced_slot_quantity = enhanced_slot_quantity_list[enhancement];
+			size_t enhanced_slot_quantity = slot_quantity_list[enhancement];
 			for (size_t i = 0; i < enhanced_slot_quantity; i++)
 			{
 				if (!(slot_index < remaining_slot_quantity))
@@ -797,85 +813,79 @@ std::pair<std::vector<core_style_t>, std::vector<size_t>> main_in_try()
 				slot_index++;
 			}
 		}
-		escape_loop:
+	escape_loop:
 		return total_value;
 	};
 
 
-	auto calculate_best_vmatrix = [skill_quantity, core_type_quantity, &get_theoretical_max_core_combination_value, &get_theoretical_max_slot_enhancement_value](const std::vector<std::vector<core_style_t>>& core_style_grid, size_t slot_quantity)-> std::pair<std::vector<core_style_t>, std::vector<size_t>>
+	std::vector<core_style_t> core_style_combination;
+	core_style_combination.reserve(slot_quantity);
+
+	size_t best_value = 0;
+	std::vector<core_style_t> best_combination;
+	std::vector<size_t> best_enhanced_slot_case;
+
+	std::function<void(skill_id_t)> simulate_core_combination;
+	simulate_core_combination = [&](skill_id_t skill_id)
 	{
-		std::vector<core_style_t> core_style_combination;
-		core_style_combination.reserve(slot_quantity);
+		// 장착된 코어 조합에 대해 최적화 된 슬롯 강화 방법과 그에 따른 가치 계산
+		auto [value_until_now, enhanced_slot_case]
+			= calculate_optimal_slot_enhancement_bruteforce(
+				core_level_list,
+				skill_value_list,
+				slot_quantity_list,
+				core_style_combination);
 
-		size_t best_value = 0;
-		std::vector<core_style_t> best_combination;
-		std::vector<size_t> best_enhanced_slot_case;
 
-		std::function<void(skill_id_t)> simulate_core_combination;
-		simulate_core_combination = [&](skill_id_t skill_id)
+		if (best_value < value_until_now)
 		{
-			// 장착된 코어 조합에 대해 최적화 된 슬롯 강화 방법과 그에 따른 가치 계산
-			auto [value_until_now, enhanced_slot_case]
-				//= calculate_optimal_slot_enhancement_bruteforce_old(
-				= calculate_optimal_slot_enhancement_bruteforce(
-				//= calculate_optimal_slot_enhancement_backtracking(
-					inputData.core_level_list,
-					inputData.skill_value_list, 
-					inputData.enhanced_slot_quantity_list, 
-					core_style_combination);
-			
+			best_value = value_until_now;
+			best_combination = core_style_combination;
+			best_enhanced_slot_case = enhanced_slot_case;
 
-			if (best_value < value_until_now)
+			if constexpr (false)
 			{
-				best_value = value_until_now;
-				best_combination = core_style_combination;
-				best_enhanced_slot_case = enhanced_slot_case;
-
-				if constexpr (false)
-				{
-					std::cout << best_value << "\n";
-					for (const core_style_t& core_style : best_combination)
-						std::cout << "\t" << core_style << "\n";
-					for (auto v : best_enhanced_slot_case)
-						std::cout << v << " ";
-					std::cout << "\n";
-				}
+				std::cout << best_value << "\n";
+				for (const core_style_t& core_style : best_combination)
+					std::cout << "\t" << core_style << "\n";
+				for (auto v : best_enhanced_slot_case)
+					std::cout << v << " ";
+				std::cout << "\n";
 			}
+		}
 
-			if (!(core_style_combination.size() < slot_quantity))
-				return;
-			const size_t empty_core_slot_quantity = slot_quantity - core_style_combination.size();
+		if (!(core_style_combination.size() < slot_quantity))
+			return;
+		const size_t empty_core_slot_quantity = slot_quantity - core_style_combination.size();
 
-			// 더 이상 장착 가능한 코어 타입이 없는지 확인
-			if (!(skill_id < core_type_quantity))
-				return;
+		// 더 이상 장착 가능한 코어 타입이 없는지 확인
+		if (!(skill_id < core_type_quantity))
+			return;
 
-			// 남은 슬롯으로 만들어 낼 수 있는 이론상의 최대 가치 계산
-			value_t theoretical_max_future_core_value = get_theoretical_max_core_combination_value(skill_id, empty_core_slot_quantity);
-			value_t theoretical_max_future_slot_value = get_theoretical_max_slot_enhancement_value(skill_id, empty_core_slot_quantity);
-			value_t theoretical_max_future_value = theoretical_max_future_core_value + theoretical_max_future_slot_value;
+		// 남은 슬롯으로 만들어 낼 수 있는 이론상의 최대 가치 계산
+		value_t theoretical_max_future_core_value = get_theoretical_max_core_combination_value(skill_id, empty_core_slot_quantity);
+		value_t theoretical_max_future_slot_value = get_theoretical_max_slot_enhancement_value(skill_id, empty_core_slot_quantity);
+		value_t theoretical_max_future_value = theoretical_max_future_core_value + theoretical_max_future_slot_value;
 
-			if (value_until_now + theoretical_max_future_value <= best_value)
-				return;
+		if (value_until_now + theoretical_max_future_value <= best_value)
+			return;
 
-			// 현재 코어 타입의 코어를 장착한 각각의 시뮬레이션 진행
-			for (const core_style_t& core_style : core_style_grid[skill_id])
-			{
-				// 본인을 포함하고 시뮬레이션 지속
-				core_style_combination.push_back(core_style);
-				simulate_core_combination(skill_id + 1);
-				core_style_combination.pop_back();
-			}
-
-			// 현재 코어 타입의 코어를 장착하지 않은 시뮬레이션으로 진행
+		// 현재 코어 타입의 코어를 장착한 각각의 시뮬레이션 진행
+		for (const core_style_t& core_style : core_style_grid[skill_id])
+		{
+			// 본인을 포함하고 시뮬레이션 지속
+			core_style_combination.push_back(core_style);
 			simulate_core_combination(skill_id + 1);
-		};
+			core_style_combination.pop_back();
+		}
 
-		const skill_id_t begin_skill_id = 0;
-		simulate_core_combination(begin_skill_id);
-		
-		return std::make_pair(best_combination, best_enhanced_slot_case);
+		// 현재 코어 타입의 코어를 장착하지 않은 시뮬레이션으로 진행
+		simulate_core_combination(skill_id + 1);
 	};
 
-	return calculate_best_vmatrix(inputData.core_style_grid, inputData.usable_slot_quantity);
-}
+	const skill_id_t begin_skill_id = 0;
+	simulate_core_combination(begin_skill_id);
+
+	return std::make_pair(best_combination, best_enhanced_slot_case);
+};
+
